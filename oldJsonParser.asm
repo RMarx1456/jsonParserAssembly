@@ -3,6 +3,8 @@
 ;Match tokens with predefined strings
 ;perform actions based on those
 
+;I'm now using mmap instead of brk but I want to keep this file.
+
 section .data
 	
 	heapstart dq 0
