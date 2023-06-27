@@ -5,7 +5,13 @@
 
 section .data
 	
+	
+	file_descriptor dq 0
+	
+	
 	mapstart dq 0
+	
+	
 	
 ;files
 %DEFINE SYS_READ 0
@@ -23,7 +29,7 @@ section .data
 
 ;memory
 %DEFINE SYS_MMAP 9
-
+%DEFINE SYS_MUNMAP 11
 
 %DEFINE SYS_BRK 12
 
@@ -59,7 +65,16 @@ section .rodata
 	fail_mmap db 'SYS_MMAP failed', 0xA
 	fail_mmapLen equ $- fail_mmap
 	
+	fail_close db 'SYS_CLOSE failed', 0xA
+	fail_closeLen equ $- fail_close
+	
+	fail_munmap db 'SYS_MUNMAP failed', 0xA
+	fail_munmapLen equ $- fail_munmap
+	
+	
+	
 section .bss
+
 
 file_stat resb 144
 
@@ -102,17 +117,17 @@ _start:
 	
 	;allocate memory for file buffer
 	
-	;find ending address of .data section
+	;map memory using mmap
 	MOV RAX, SYS_MMAP
-	MOV RDi, 0
+	MOV RDI, 0
 	MOV RSI, QWORD [file_stat + 48]
-	MOV RDX, 0 ;PROT_READ | PROT_EXEC
-	MOV R10, 0x21 ;MAP_SHARED | MAP_ANONYMOUS
+	MOV RDX, 0x3 ; PROT_READ | PROT_WRITE
+	MOV R10, 0x22 ;MAP_ANONYMOUS | MAP_PRIVATE
 	MOV R8, -1
 	MOV R9, 0
 	SYSCALL
 	
-	MOV [mapstart], QWORD RAX
+	MOV QWORD [mapstart], RAX
 	
 	;align stack for exit call
 	MOV R14, 15
@@ -163,14 +178,18 @@ _start:
 	XOR R14, R14
 	XOR R15, R15
 	
-	;move file descriptor into RDI
+	
+	;move file descriptor into RDI and file_descriptor
 	MOV RDI, RAX
+	MOV [file_descriptor], QWORD RDI
+	
 	
 	
 	;sys_read
 	MOV RAX, SYS_READ
 	;rdi already set
-	LEA RSI, QWORD [mapstart]
+	;Suspicious that this line below is causing me an error, yep, it is, fixed with correct permissions in MMAP
+	MOV RSI, QWORD [mapstart]
 	MOV RDX, QWORD [file_stat+48]
 	SYSCALL
 	
@@ -193,12 +212,36 @@ _start:
 	ADD RSP, R14
 	XOR R14, R14
 	XOR R15, R15
+
 	
+	;close file
+	MOV RAX, SYS_CLOSE
+	MOV RDI, QWORD [file_descriptor]
+	SYSCALL
 	
-	;print buffer
+	;error handling
+	MOV R14, 15
+	MOV R15, RSP
+	OR R15, 0x0F
+	SUB R14, R15
+	SUB RSP, R14
+	
+	;jump to exit if error with sys_read, setup print call
+	MOV RSI, fail_close
+	MOV RDX, fail_closeLen
+	
+	CMP RAX, 0
+	JL exit
+	
+	;clear registers R14, R15 and free space on stack
+	ADD RSP, R14
+	XOR R14, R14
+	XOR R15, R15
+	
+	;print mapped buffer
 	MOV RAX, SYS_WRITE
 	MOV RDI, STDOUT
-	LEA RSI, QWORD [mapstart]
+	MOV RSI, QWORD [mapstart]
 	MOV RDX, QWORD [file_stat+48]
 	SYSCALL
 	
@@ -220,6 +263,33 @@ _start:
 	ADD RSP, R14
 	XOR R14, R14
 	XOR R15, R15
+	
+	
+	;unmap buffer from memory
+	MOV RAX, SYS_MUNMAP
+	MOV RDI, QWORD [mapstart]
+	MOV RSI, QWORD [file_stat+48]
+	SYSCALL
+	
+	;error handling
+	MOV R14, 15
+	MOV R15, RSP
+	OR R15, 0x0F
+	SUB R14, R15
+	SUB RSP, R14
+	
+	;jump to exit if error with sys_read, setup print call
+	MOV RSI, fail_munmap
+	MOV RDX, fail_munmapLen
+	
+	CMP RAX, 0
+	JL exit
+	
+	;clear registers R14, R15 and free space on stack
+	ADD RSP, R14
+	XOR R14, R14
+	XOR R15, R15
+	
 	
 	
 	;prepare for exiting successfully
